@@ -1,154 +1,232 @@
-import { useEffect, useState } from "react";
-import Card from "@mui/material/Card";
+import { useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import Box from "@mui/material/Box";
+import Paper from "@mui/material/Paper";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Typography from "@mui/material/Typography";
-import IconButton from "@mui/material/IconButton";
-import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
+import Button from "@mui/material/Button";
+import Link from "@mui/material/Link";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
-import Button from "@mui/material/Button";
-import CheckIcon from "@mui/icons-material/Check";
-import CloseIcon from "@mui/icons-material/Close";
-import DataTable from "../../components/DataTable/DataTable";
+import TextField from "@mui/material/TextField";
+import Skeleton from "@mui/material/Skeleton";
+import { useTheme } from "@mui/material/styles";
 import { apiService, ENDPOINTS } from "../../api/client";
+import useLoad from "../../hooks/useLoad";
+import { usePersona } from "../../persona";
+import { useNotify } from "../../components/Notify";
+import PageHeader from "../../components/PageHeader";
+import StepTrack from "../../components/StepTrack";
+import ErrorNote from "../../components/ErrorNote";
+import { queueChanged } from "../../components/queueEvents";
 
-const QUEUE_TYPES = ["meeting", "membership", "bylaws"];
-const QUEUE_LABELS = { meeting: "Meetings", membership: "Membership requests", bylaws: "Bylaws" };
+const KINDS = [
+  { key: "membershipRequests", label: "Members", noun: "membership" },
+  { key: "meetings", label: "Meetings", noun: "meeting" },
+  { key: "bylawsUploads", label: "Bylaws", noun: "bylaws upload" },
+];
+
+const ago = (iso) => {
+  const d = Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
+};
 
 /**
- * A single approval queue that renders three different entity types
- * (meetings, membership requests, bylaws uploads) through one generic
- * table + one approve/reject confirmation dialog, keyed by `type` — the
- * same "write the shared shape once" idea as AssignmentTab in the
- * companion iam-admin-console repo, applied to an approval workflow
- * instead of a permission-assignment workflow.
+ * One queue for three kinds of request. Each row shows where the request is
+ * in the two-signature flow; the list itself only holds what the current
+ * person can sign right now, so switching persona changes what you see.
  */
 export default function PendingApprovalsPage() {
-  const [activeTab, setActiveTab] = useState(0);
-  const [queues, setQueues] = useState({ meeting: [], membership: [], bylaws: [] });
-  const [loading, setLoading] = useState(true);
-  const [pendingAction, setPendingAction] = useState(null); // { type, id, label, approve }
+  const t = useTheme().tokens;
+  const notify = useNotify();
+  const { email } = usePersona();
+  const [tab, setTab] = useState(0);
+  const [rejecting, setRejecting] = useState(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(null);
+  const { data, error, reload } = useLoad(() => apiService.get(ENDPOINTS.APPROVALS.QUEUE));
 
-  const load = () => {
-    setLoading(true);
-    apiService
-      .get(ENDPOINTS.APPROVALS.QUEUE)
-      .then((data) => {
-        setQueues({
-          meeting: data?.meetings || [],
-          membership: data?.membershipRequests || [],
-          bylaws: data?.bylawsUploads || [],
-        });
-      })
-      .catch((e) => console.error("Failed to load approval queue", e))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
-
-  const confirm = async () => {
-    if (!pendingAction) return;
-    const { id, approve } = pendingAction;
-    if (approve) {
-      await apiService.put(ENDPOINTS.APPROVALS.APPROVE(id));
-    } else {
-      await apiService.delete(ENDPOINTS.APPROVALS.REJECT(id));
+  const sign = async (item) => {
+    setBusy(item.id);
+    try {
+      const r = await apiService.put(ENDPOINTS.APPROVALS.APPROVE(item.id));
+      notify(
+        r?.status === "APPROVED"
+          ? `${item.title}: approved.`
+          : `${item.title}: signed. It now waits for an admin.`
+      );
+      reload();
+      queueChanged();
+    } catch (e) {
+      notify(e.message, "error");
+    } finally {
+      setBusy(null);
     }
-    setPendingAction(null);
-    load();
+  };
+  const reject = async () => {
+    const item = rejecting;
+    setRejecting(null);
+    try {
+      await apiService.delete(ENDPOINTS.APPROVALS.REJECT(item.id, reason.trim()));
+      notify(`${item.title}: turned down.`, "info");
+      reload();
+      queueChanged();
+    } catch (e) {
+      notify(e.message, "error");
+    }
+    setReason("");
   };
 
-  const columnsFor = (type) => {
-    const base = [
-      { header: "Item", accessor: "label", width: "35%" },
-      { header: "Organization", accessor: "orgName", width: "30%" },
-      { header: "Status", accessor: "status", width: "20%" },
-      { header: "", accessor: "actions", width: "15%", align: "center" },
-    ];
-    return base;
-  };
-
-  const rowsFor = (type) =>
-    (queues[type] || []).map((item) => ({
-      id: item.id,
-      label: item.title || item.name || item.fileName,
-      orgName: item.organizationName || "-",
-      status: <Chip size="small" label="Pending approval" color="warning" />,
-      actions: (
-        <Box>
-          <IconButton
-            size="small"
-            color="success"
-            onClick={() =>
-              setPendingAction({ type, id: item.id, label: item.title || item.name || item.fileName, approve: true })
-            }
-          >
-            <CheckIcon fontSize="small" />
-          </IconButton>
-          <IconButton
-            size="small"
-            color="error"
-            onClick={() =>
-              setPendingAction({ type, id: item.id, label: item.title || item.name || item.fileName, approve: false })
-            }
-          >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </Box>
-      ),
-    }));
-
-  const currentType = QUEUE_TYPES[activeTab];
+  if (error) return <ErrorNote error={error} what="the queue" />;
+  const kind = KINDS[tab];
+  const items = data?.[kind.key] || [];
+  const total = data ? KINDS.reduce((n, k) => n + data[k.key].length, 0) : null;
+  const admin = email === "admin@example.org";
 
   return (
-    <Card>
-      <Box p={3} pb={0}>
-        <Typography variant="h6">Pending Approvals</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Review and act on everything waiting for your sign-off.
+    <>
+      <PageHeader
+        title="Approvals"
+        subtitle={
+          total == null
+            ? " "
+            : total
+              ? `${total} request${total === 1 ? "" : "s"} waiting for your signature.`
+              : "Nothing is waiting for your signature."
+        }
+      />
+      <Paper
+        sx={{
+          p: 2,
+          mb: 2.5,
+          borderRadius: "14px",
+          display: "flex",
+          gap: 2,
+          alignItems: "center",
+          flexWrap: "wrap",
+          bgcolor: t.page,
+        }}
+      >
+        <StepTrack status="PENDING_ADVISOR" />
+        <Typography variant="body2" color="text.secondary" flex={1} minWidth={240}>
+          New members, meetings and bylaws need two signatures: the club's advisor first, then an
+          admin.
+          {admin
+            ? " As an admin you see what advisors have already signed."
+            : " As an advisor you see your club's new requests."}
         </Typography>
-      </Box>
-      <Box p={3}>
-        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ mb: 3 }}>
-          {QUEUE_TYPES.map((type, i) => (
-            <Tab key={type} label={`${QUEUE_LABELS[type]} (${queues[type].length})`} />
-          ))}
-        </Tabs>
-        {loading ? (
-          <Box display="flex" justifyContent="center" py={6}>
-            <CircularProgress />
-          </Box>
-        ) : (
-          <DataTable columns={columnsFor(currentType)} rows={rowsFor(currentType)} searchable />
+      </Paper>
+
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v)}
+        sx={{ mb: 2, borderBottom: 1, borderColor: "divider" }}
+        variant="scrollable"
+      >
+        {KINDS.map((k) => (
+          <Tab key={k.key} label={`${k.label}${data ? ` (${data[k.key].length})` : ""}`} />
+        ))}
+      </Tabs>
+
+      <Box display="grid" gap={1.5}>
+        {!data && [0, 1].map((i) => <Skeleton key={i} variant="rounded" height={96} />)}
+        {items.map((item) => (
+          <Paper
+            key={item.id}
+            sx={{
+              p: 2,
+              borderRadius: "14px",
+              display: "grid",
+              alignItems: "center",
+              gap: 2,
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "minmax(0, 1fr) auto auto",
+              },
+            }}
+          >
+            <Box minWidth={0}>
+              <Typography fontWeight={700}>{item.title}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                <Link
+                  component={RouterLink}
+                  to={`/organizations/${item.organizationId}`}
+                  color="inherit"
+                >
+                  {item.organizationName}
+                </Link>
+                {`, asked ${ago(item.requestedAt)}`}
+                {item.requestedBy ? ` by ${item.requestedBy}` : ""}
+              </Typography>
+            </Box>
+            <StepTrack status={item.status} />
+            <Box display="flex" gap={1} justifyContent={{ xs: "flex-start", md: "flex-end" }}>
+              <Button
+                variant="outlined"
+                color="error"
+                onClick={() => setRejecting(item)}
+                disabled={busy === item.id}
+              >
+                Turn down
+              </Button>
+              <Button
+                variant="contained"
+                color="success"
+                onClick={() => sign(item)}
+                disabled={busy === item.id}
+              >
+                {item.status === "PENDING_ADVISOR" ? "Sign" : "Approve"}
+              </Button>
+            </Box>
+          </Paper>
+        ))}
+        {data && !items.length && (
+          <Paper
+            sx={{
+              p: 4,
+              textAlign: "center",
+              borderStyle: "dashed",
+              borderRadius: "14px",
+            }}
+          >
+            <Typography fontWeight={700} mb={0.5}>
+              No {kind.noun} requests for you
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {admin
+                ? "Requests reach you once the club's advisor has signed. Switch to an advisor at the top right to sign the first step."
+                : "Switch to the admin at the top right to see what is waiting for the second signature."}
+            </Typography>
+          </Paper>
         )}
       </Box>
 
-      <Dialog open={!!pendingAction} onClose={() => setPendingAction(null)} fullWidth maxWidth="xs">
-        <DialogTitle>Confirm</DialogTitle>
+      <Dialog open={!!rejecting} onClose={() => setRejecting(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Turn down this request?</DialogTitle>
         <DialogContent>
-          <Typography fontWeight="bold" mb={1}>
-            {pendingAction?.label}
+          <Typography fontWeight={700} mb={1.5}>
+            {rejecting?.title}
           </Typography>
-          <Typography>
-            Are you sure you want to {pendingAction?.approve ? "approve" : "reject"} this?
-          </Typography>
+          <TextField
+            fullWidth
+            label="Reason (optional)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            multiline
+            minRows={2}
+            helperText="The requester sees this."
+          />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPendingAction(null)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color={pendingAction?.approve ? "success" : "error"}
-            onClick={confirm}
-          >
-            {pendingAction?.approve ? "Approve" : "Reject"}
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRejecting(null)}>Keep it</Button>
+          <Button variant="contained" color="error" onClick={reject}>
+            Turn down
           </Button>
         </DialogActions>
       </Dialog>
-    </Card>
+    </>
   );
 }
