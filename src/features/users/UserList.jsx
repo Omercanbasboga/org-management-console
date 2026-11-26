@@ -1,50 +1,54 @@
-import { useEffect, useState } from "react";
-import Card from "@mui/material/Card";
+import Paper from "@mui/material/Paper";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import CircularProgress from "@mui/material/CircularProgress";
-import DataTable from "../../components/DataTable/DataTable";
 import { apiService, ENDPOINTS } from "../../api/client";
+import useLoad from "../../hooks/useLoad";
+import PageHeader from "../../components/PageHeader";
+import DataTable from "../../components/DataTable";
+import ErrorNote from "../../components/ErrorNote";
+
+const ROLE = { STUDENT: "Student", STAFF: "Staff", ADMIN: "Admin" };
 
 export default function UserList() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    apiService
-      .get(ENDPOINTS.USERS.LIST)
-      .then((data) => setRows(data || []))
-      .catch((e) => console.error("Failed to load users", e))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const columns = [
-    { header: "Member ID", accessor: "memberId", width: "20%" },
-    { header: "Name", accessor: "name", width: "35%" },
-    { header: "Department", accessor: "department", width: "25%" },
-    { header: "Role", accessor: "role", width: "20%" },
-  ];
-
-  const tableRows = rows.map((u) => ({
-    id: u.id,
-    memberId: u.memberId,
-    name: `${u.firstName || ""} ${u.lastName || ""}`.trim(),
-    department: u.department || "-",
-    role: u.role || "-",
-  }));
-
+  const { data, error } = useLoad(() => apiService.get(ENDPOINTS.USERS.LIST));
   return (
-    <Card>
-      <Box p={3}>
-        <Typography variant="h6">Users</Typography>
-      </Box>
-      {loading ? (
-        <Box display="flex" justifyContent="center" p={4}>
-          <CircularProgress />
-        </Box>
+    <>
+      <PageHeader
+        title="People"
+        subtitle="Students and staff. Visible to admins, club officers and advisors, who need it to add members."
+      />
+      {error ? (
+        <ErrorNote error={error} what="the directory" />
       ) : (
-        <DataTable columns={columns} rows={tableRows} searchable />
+        <Paper sx={{ p: 2.5, borderRadius: "14px" }}>
+          <DataTable
+            searchable
+            columns={[
+              { header: "Name", accessor: "name" },
+              { header: "Number", accessor: "memberId" },
+              { header: "Department", accessor: "department" },
+              { header: "Role", accessor: "role" },
+            ]}
+            rows={(data || []).map((u) => ({
+              id: u.id,
+              search: `${u.firstName} ${u.lastName} ${u.email} ${u.memberId} ${u.department}`,
+              name: (
+                <Box>
+                  <Typography variant="body2" fontWeight={650}>
+                    {u.firstName} {u.lastName}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {u.email}
+                  </Typography>
+                </Box>
+              ),
+              memberId: u.memberId,
+              department: u.department,
+              role: ROLE[u.role] || u.role,
+            }))}
+          />
+        </Paper>
       )}
-    </Card>
+    </>
   );
 }
