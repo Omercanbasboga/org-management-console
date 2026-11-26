@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/org-management-console/static/css/main.de77976f.css",
+    "main.js": "/org-management-console/static/js/main.b5ef0eee.js",
+    "static/media/figtree-latin-wght-normal.woff2": "/org-management-console/static/media/figtree-latin-wght-normal.c472608ff32455cf4203.woff2",
+    "static/media/figtree-latin-ext-wght-normal.woff2": "/org-management-console/static/media/figtree-latin-ext-wght-normal.b2de781f35d1dd664471.woff2",
+    "index.html": "/org-management-console/index.html",
+    "main.de77976f.css.map": "/org-management-console/static/css/main.de77976f.css.map",
+    "main.b5ef0eee.js.map": "/org-management-console/static/js/main.b5ef0eee.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.de77976f.css",
+    "static/js/main.b5ef0eee.js"
+  ]
+}
